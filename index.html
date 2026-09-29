@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Liquid Garden — Two Oil Prototype</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#020914}
+body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif}
+canvas{display:block;width:100vw;height:100vh;touch-action:none}
+.hud{position:fixed;top:18px;left:18px;right:18px;display:flex;justify-content:space-between;pointer-events:none}
+.pill{padding:10px 16px;border:1px solid rgba(220,240,255,.25);border-radius:24px;color:#eef8ff;background:rgba(5,14,28,.42);backdrop-filter:blur(10px);font-size:16px}
+.hint{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);color:rgba(230,245,255,.72);font-size:13px;white-space:nowrap}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud"><div class="pill">‹</div><div class="pill" id="time">1:00</div></div>
+<div class="hint">タップでオイルが揺れる</div>
+<script>
+const canvas=document.getElementById("c"),ctx=canvas.getContext("2d");
+let W=0,H=0,DPR=1,last=performance.now(),elapsed=0,shake=0;
+
+function resize(){
+  DPR=Math.min(devicePixelRatio||1,2);
+  W=innerWidth;H=innerHeight;
+  canvas.width=W*DPR;canvas.height=H*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+addEventListener("resize",resize);resize();
+
+const COLORS={
+  A:{base:"#45c9ff",deep:"#1479d1",hi:"#effcff",glow:"#53dcff"},
+  B:{base:"#73e39d",deep:"#209c67",hi:"#f2fff7",glow:"#66ffc0"}
+};
+
+const drops=[];
+function spawn(type,x,y,r,vy){
+  drops.push({
+    type,x,y,r,vy,
+    phase:Math.random()*Math.PI*2,
+    wobble:Math.random()*Math.PI*2,
+    landed:false
+  });
+}
+
+/* Two independent streams, deliberately offset in timing and position. */
+for(let i=0;i<4;i++){
+  spawn("A",W/2-22,H*.30+i*58,7+i*1.1,24+i*2);
+  spawn("B",W/2+22,H*.33+i*58,7+i*.95,22+i*2.4);
+}
+
+const vessel={
+  cx:()=>W/2,
+  top:()=>H*.29,
+  bottom:()=>H*.73,
+  rx:()=>Math.min(W*.34,210),
+  ry:()=>Math.min(H*.145,135)
+};
+
+function insideTop(d){
+  const cx=vessel.cx(),cy=vessel.top(),rx=vessel.rx()-d.r,ry=vessel.ry()-d.r;
+  const dx=(d.x-cx)/Math.max(1,rx),dy=(d.y-cy)/Math.max(1,ry);
+  return dx*dx+dy*dy<1;
+}
+
+function update(dt){
+  elapsed+=dt;
+  shake*=Math.pow(.001,dt);
+
+  for(const d of drops){
+    d.phase+=dt*3;
+    d.wobble+=dt*5;
+    if(!d.landed){
+      d.vy+=24*dt;
+      d.x+=Math.sin(d.phase)*5.5*dt;
+      d.y+=d.vy*dt;
+
+      /* soft rounded upper-wall collision */
+      if(d.y < H*.60 && !insideTop(d)){
+        d.x += (vessel.cx()-d.x)*.055;
+        d.vy*=.96;
+      }
+
+      const floor=vessel.bottom()+vessel.ry()*.56;
+      if(d.y>=floor){
+        d.landed=true;
+        d.y=floor;
+        d.vy=0;
+      }
+    }else{
+      /* landed droplets become part of a soft lower liquid mass */
+      d.y += Math.sin(d.wobble)*.22;
+      d.x += (vessel.cx()-d.x)*.018;
+      d.r=Math.min(d.r+dt*.55,17);
+    }
+  }
+
+  /* Gentle replenishment for the prototype. */
+  if(elapsed<60){
+    if(Math.random()<dt*.72)
+      spawn("A",vessel.cx()-18+(Math.random()-.5)*7,H*.31,6+Math.random()*4,17+Math.random()*13);
+    if(Math.random()<dt*.72)
+      spawn("B",vessel.cx()+18+(Math.random()-.5)*7,H*.34,6+Math.random()*4,17+Math.random()*13);
+  }
+}
+
+function vesselPath(){
+  const cx=vessel.cx(),t=vessel.top(),b=vessel.bottom(),rx=vessel.rx(),ry=vessel.ry(),n=42;
+  ctx.beginPath();
+  ctx.moveTo(cx-rx,t-ry);
+  ctx.bezierCurveTo(cx-rx*.98,t-ry*.2,cx-rx*.74,t+ry*.55,cx-n,(t+b)/2);
+  ctx.bezierCurveTo(cx-rx*.74,b-ry*.55,cx-rx*.98,b+ry*.2,cx-rx,b+ry);
+  ctx.quadraticCurveTo(cx,b+ry*1.03,cx+rx,b+ry);
+  ctx.bezierCurveTo(cx+rx*.98,b+ry*.2,cx+rx*.74,b-ry*.55,cx+n,(t+b)/2);
+  ctx.bezierCurveTo(cx+rx*.74,t+ry*.55,cx+rx*.98,t-ry*.2,cx+rx,t-ry);
+  ctx.quadraticCurveTo(cx,t-ry*1.03,cx-rx,t-ry);
+  ctx.closePath();
+}
+
+function background(){
+  const g=ctx.createRadialGradient(W*.5,H*.45,10,W*.5,H*.45,Math.max(W,H)*.75);
+  g.addColorStop(0,"#0b2b52");
+  g.addColorStop(.55,"#06172f");
+  g.addColorStop(1,"#010710");
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+
+  for(let i=0;i<82;i++){
+    const x=(i*91.73)%W,y=(i*149.31)%H,r=i%7===0?1.8:.75;
+    ctx.fillStyle=i%5===0?"rgba(125,220,255,.75)":"rgba(245,250,255,.68)";
+    ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function ellipseLiquid(y,type,alpha){
+  const q=COLORS[type],rx=vessel.rx()*.91;
+  const grad=ctx.createLinearGradient(vessel.cx()-rx,y,vessel.cx()+rx,y);
+  grad.addColorStop(0,q.deep+"30");
+  grad.addColorStop(.25,q.base+"8a");
+  grad.addColorStop(.52,q.base+"b0");
+  grad.addColorStop(1,q.deep+"30");
+  ctx.globalAlpha=alpha;
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.ellipse(vessel.cx(),y,rx,23,0,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle=q.hi+"62";ctx.lineWidth=1.4;
+  ctx.stroke();
+  ctx.globalAlpha=1;
+}
+
+function lowerOil(){
+  const cx=vessel.cx(),y=vessel.bottom()+vessel.ry()*.52,rx=vessel.rx()*.9;
+  const g=ctx.createLinearGradient(cx-rx,y,cx+rx,y);
+  g.addColorStop(0,"rgba(25,140,220,.18)");
+  g.addColorStop(.35,"rgba(80,205,255,.38)");
+  g.addColorStop(.53,"rgba(100,225,180,.44)");
+  g.addColorStop(1,"rgba(35,155,105,.16)");
+  ctx.fillStyle=g;
+  ctx.beginPath();ctx.ellipse(cx,y,rx,27,0,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle="rgba(220,255,255,.42)";ctx.lineWidth=1.2;ctx.stroke();
+
+  /* translucent color pockets */
+  for(let i=0;i<10;i++){
+    const type=i%2===0?"A":"B",q=COLORS[type];
+    const x=cx+(i-4.5)*22+Math.sin(elapsed*1.5+i)*5;
+    const yy=y+Math.sin(elapsed*1.1+i)*5;
+    ctx.fillStyle=q.base+"70";
+    ctx.beginPath();ctx.ellipse(x,yy,10+(i%3)*3,5+(i%2)*2,0,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function drawDrop(d){
+  const q=COLORS[d.type];
+  const s=1+Math.sin(d.wobble)*.035;
+  const r=d.r*s;
+  const stretch=d.landed?1:(1+Math.min(d.vy/110,.34));
+  ctx.save();
+  ctx.shadowBlur=19;ctx.shadowColor=q.glow;
+
+  const grad=ctx.createRadialGradient(
+    d.x-r*.34,d.y-r*.42,r*.05,
+    d.x,d.y,r*1.15
+  );
+  grad.addColorStop(0,q.hi);
+  grad.addColorStop(.17,"rgba(240,255,255,.95)");
+  grad.addColorStop(.48,q.base+"e8");
+  grad.addColorStop(.78,q.deep+"78");
+  grad.addColorStop(1,q.deep+"28");
+
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  ctx.ellipse(d.x,d.y,r*.92,r*stretch,0,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.shadowBlur=0;
+  ctx.strokeStyle=q.hi+"8c";ctx.lineWidth=1;
+  ctx.stroke();
+
+  ctx.fillStyle="rgba(255,255,255,.9)";
+  ctx.beginPath();
+  ctx.ellipse(d.x-r*.34,d.y-r*.40,r*.18,r*.105,-.35,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function draw(){
+  background();
+  ctx.save();
+
+  vesselPath();
+  ctx.fillStyle="rgba(185,225,255,.035)";ctx.fill();
+  ctx.strokeStyle="rgba(215,242,255,.64)";ctx.lineWidth=2.3;ctx.stroke();
+
+  /* The two oils live together at the upper reservoir. */
+  ellipseLiquid(vessel.top()+2,"A",.92);
+  ellipseLiquid(vessel.top()+19,"B",.78);
+
+  /* soft central overlap at the source */
+  const cx=vessel.cx(),sy=vessel.top()+12;
+  const mix=ctx.createRadialGradient(cx,sy,2,cx,sy,55);
+  mix.addColorStop(0,"rgba(90,225,220,.34)");
+  mix.addColorStop(1,"rgba(90,225,220,0)");
+  ctx.fillStyle=mix;ctx.beginPath();ctx.ellipse(cx,sy,60,20,0,0,Math.PI*2);ctx.fill();
+
+  lowerOil();
+
+  for(const d of drops)drawDrop(d);
+
+  /* glass highlight */
+  const hg=ctx.createLinearGradient(cx-85,0,cx+85,0);
+  hg.addColorStop(0,"rgba(255,255,255,0)");
+  hg.addColorStop(.46,"rgba(255,255,255,.14)");
+  hg.addColorStop(.52,"rgba(255,255,255,.025)");
+  hg.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.fillStyle=hg;vesselPath();ctx.fill();
+
+  ctx.restore();
+}
+
+function loop(now){
+  const dt=Math.min(.033,(now-last)/1000);
+  last=now;update(dt);draw();
+  const left=Math.max(0,60-Math.floor(elapsed));
+  document.getElementById("time").textContent="0:"+String(left).padStart(2,"0");
+  requestAnimationFrame(loop);
+}
+canvas.addEventListener("pointerdown",e=>{
+  shake=1;
+  for(const d of drops){
+    const dx=d.x-e.clientX,dy=d.y-e.clientY,dist=Math.hypot(dx,dy);
+    if(dist<120){
+      d.vy-=42*(1-dist/120);
+      d.x+=(dx===0?1:dx)*-0.06;
+    }
+  }
+});
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
